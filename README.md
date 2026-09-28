@@ -1,7 +1,7 @@
 # QMK Layout – Keychron K2 HE (ANSI RGB)
 
 This repo contains my custom QMK keymap (`mylayout`) for the **Keychron K2 HE** with Hall Effect switches and an ANSI RGB layout.  
-Built on Keychron’s `hall_effect_playground` branch of QMK firmware.
+Built on Keychron’s `2025q3` branch of QMK firmware (the older `hall_effect_playground` branch is deprecated).
 
 ---
 
@@ -24,7 +24,7 @@ brew install qmk/qmk/qmk
 
 ### 2. Clone the Correct Firmware Branch
 ```bash
-git clone -b hall_effect_playground https://github.com/Keychron/qmk_firmware.git ~/qmk_firmware
+git clone -b 2025q3 https://github.com/Keychron/qmk_firmware.git ~/qmk_firmware
 git submodule update --init --recursive
 qmk setup -H ~/qmk_firmware
 ```
@@ -54,15 +54,42 @@ git submodule update --init
 
 Then compile the firmware using your custom keymap:
 ```bash
-qmk compile -kb keychron/k2_he/ansi_rgb -km mylayout
+qmk compile -kb keychron/k2_he/ansi -km mylayout
 ```
 
 ---
 
 ## 🧠 Notes
 
-- This layout is in `keyboards/keychron/k2_he/ansi_rgb/keymaps/mylayout/`.
+- This layout is in `keyboards/keychron/k2_he/ansi/keymaps/mylayout/`.
 - You can flash the compiled `.bin` using QMK Toolbox.
+
+---
+
+## 🚦 Key Signals
+
+Programs on the computer can color any key green (good), yellow (warn) or red
+(needs attention) over raw HID. Signals are held in RAM, can expire on their
+own, and show only while the RGB backlight is on. Implementation and full
+details: `features/key_signals.h`.
+
+Send a 32-byte report to the keyboard's raw HID interface (vendor ID `0x3434`,
+usage page `0xFF60`, usage `0x61`). The keyboard echoes it back with the status
+byte filled in.
+
+| Byte | Meaning |
+|---|---|
+| 0 | `0x07` (VIA custom set value) |
+| 1 | `0x00` (VIA custom channel) |
+| 2 | command: `0x01` set, `0x02` clear all, `0x03` info |
+| 3 | status in reply: `0` ok, `1` bad command, `2` bad key, `3` bad level/pattern |
+| 4, 5 | set: key row, column (matrix position) |
+| 6 | set: level `0` off, `1` good, `2` warn, `3` alert, `4` custom |
+| 7 | set: pattern `0` solid, `1` blink, `2` pulse |
+| 8, 9 | set: expiry in seconds, big endian, `0` = until cleared |
+| 10–12 | set: r, g, b for the custom level |
+
+Info replies with the protocol version, rows and columns in bytes 4–6.
 
 ---
 

@@ -20,6 +20,7 @@
 #include QMK_KEYBOARD_H
 #include "keychron_common.h"
 #include "features/custom_shift_keys.h"
+#include "features/key_signals.h"
 
 enum layers {
     MAC_BASE,
@@ -207,4 +208,9 @@ void matrix_scan_user(void) {
             auto_click_timer = timer_read(); // Reset timer
         }
     }
+}
+
+bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
+    key_signals_render(led_min, led_max);
+    return true;
 }
