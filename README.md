@@ -96,6 +96,10 @@ and command line:
 keysignal set f5 alert --pattern pulse --source ci --id deploy
 ```
 
+`keysignal t3` gives each [T3 Code](https://github.com/pingdotgg/t3code) thread
+its own F-key: amber while it works, red when it needs you, green when it's done
+([setup](host/README.md#t3-code)).
+
 Raw protocol: send a 32-byte report to the keyboard's raw HID interface (vendor
 ID `0x3434`, usage page `0xFF60`, usage `0x61`). The keyboard echoes it back with
 the status byte filled in.

@@ -3,7 +3,10 @@ name = "keysignal"
 version = "0.1.0"
 description = "Color keys on the Keychron K2 HE from anything on this Mac"
 requires-python = ">=3.10"
-dependencies = ["hidapi>=0.14"]
+dependencies = [
+    "hidapi>=0.14",
+    "websockets>=14",
+]
 
 [project.scripts]
 keysignal = "keysignal.cli:main"

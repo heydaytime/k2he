@@ -5,8 +5,10 @@ import json
 import os
 import plistlib
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -15,8 +17,7 @@ from . import protocol
 
 DEFAULT_PORT = 7780
 LAUNCHD_LABEL = "dev.heydaytime.keysignal"
-PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
-LOG_PATH = Path.home() / "Library" / "Logs" / "keysignal.log"
+T3_LAUNCHD_LABEL = "dev.heydaytime.keysignal-t3"
 
 
 def _base_url():
@@ -103,32 +104,94 @@ def cmd_keys(args):
     print("keys:      " + " ".join(keys["keys"]))
 
 
-def cmd_install(args):
-    exe = shutil.which("keysignal") or os.path.abspath(sys.argv[0])
-    program = [exe, "serve", "--port", str(args.port)]
-    if args.pool:
-        program += ["--pool", args.pool]
-    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(PLIST_PATH, "wb") as f:
+def _agent_paths(label):
+    return (Path.home() / "Library" / "LaunchAgents" / f"{label}.plist",
+            Path.home() / "Library" / "Logs" / f"{label.rsplit('.', 1)[-1]}.log")
+
+
+def _install_agent(label, args):
+    """Run `keysignal <args>` at login under launchd, restarting it if it exits."""
+    plist, log = _agent_paths(label)
+    program = [shutil.which("keysignal") or os.path.abspath(sys.argv[0]), *args]
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(plist, "wb") as f:
         plistlib.dump({
-            "Label": LAUNCHD_LABEL,
+            "Label": label,
             "ProgramArguments": program,
             "RunAtLoad": True,
             "KeepAlive": True,
-            "StandardOutPath": str(LOG_PATH),
-            "StandardErrorPath": str(LOG_PATH),
+            "StandardOutPath": str(log),
+            "StandardErrorPath": str(log),
         }, f)
     domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", f"{domain}/{LAUNCHD_LABEL}"], capture_output=True)
-    subprocess.run(["launchctl", "bootstrap", domain, str(PLIST_PATH)], check=True)
-    print(f"installed {PLIST_PATH}\nrunning `{' '.join(program)}`, log: {LOG_PATH}")
+    subprocess.run(["launchctl", "bootout", f"{domain}/{label}"], capture_output=True)
+    subprocess.run(["launchctl", "bootstrap", domain, str(plist)], check=True)
+    print(f"installed {plist}\nrunning `{' '.join(program)}`, log: {log}")
+
+
+def _uninstall_agent(label):
+    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True)
+    _agent_paths(label)[0].unlink(missing_ok=True)
+    print("uninstalled")
+
+
+def cmd_install(args):
+    program = ["serve", "--port", str(args.port)]
+    if args.pool:
+        program += ["--pool", args.pool]
+    _install_agent(LAUNCHD_LABEL, program)
 
 
 def cmd_uninstall(args):
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"], capture_output=True)
-    PLIST_PATH.unlink(missing_ok=True)
-    print("uninstalled")
+    _uninstall_agent(LAUNCHD_LABEL)
+
+
+def cmd_t3_pair(args):
+    from . import t3
+
+    try:
+        origin = args.server or t3.server_origin()
+        token = t3.exchange(origin, t3.pairing_credential(args.link), args.label)
+    except (ValueError, t3.T3Unavailable, t3.AuthRejected) as e:
+        sys.exit(f"keysignal: {e}")
+    t3.save_token(token)
+    days = (token["expires_at"] - time.time()) / 86400
+    print(f"paired with {origin} as \"{args.label}\" ({token['scope']}), "
+          f"token valid for {days:.0f} days, saved to {t3.TOKEN_PATH}")
+
+
+def cmd_t3_run(args):
+    from . import t3
+
+    # launchctl stops the agent with SIGTERM; exit normally so the lights get cleared.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    t3.run(done_hours=args.done_hours, log=lambda msg: print(msg, flush=True))
+
+
+def cmd_t3_status(args):
+    from . import t3
+
+    try:
+        token = t3.load_token()
+    except t3.NotPaired as e:
+        sys.exit(f"keysignal: {e}")
+    left = token["expires_at"] - time.time()
+    if left <= 0:
+        print("paired, but the token has expired: pair again with a new link")
+    else:
+        print(f"paired ({token['scope']}), token expires in {left / 86400:.1f} days")
+    running = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{T3_LAUNCHD_LABEL}"],
+                             capture_output=True).returncode == 0
+    print(f"bridge:  {'running at login' if running else 'not installed (keysignal t3 install)'}")
+
+
+def cmd_t3_install(args):
+    _install_agent(T3_LAUNCHD_LABEL, ["t3", "run", "--done-hours", str(args.done_hours)])
+
+
+def cmd_t3_uninstall(args):
+    _uninstall_agent(T3_LAUNCHD_LABEL)
 
 
 def main(argv=None):
@@ -167,6 +230,22 @@ def main(argv=None):
     p.add_argument("--pool")
     p.set_defaults(func=cmd_install)
     sub.add_parser("uninstall", help="stop and remove the login service").set_defaults(func=cmd_uninstall)
+
+    t3 = sub.add_parser("t3", help="light a key for each T3 Code thread").add_subparsers(
+        dest="t3_command", required=True)
+    p = t3.add_parser("pair", help="pair with T3 Code using a read-only pairing link")
+    p.add_argument("link", help="the pairing link (or just its token) from T3 Code's Connections settings")
+    p.add_argument("--label", default="K2 HE keyboard", help="name shown in T3's connected clients")
+    p.add_argument("--server", help="T3 server origin (default: the running T3 Code)")
+    p.set_defaults(func=cmd_t3_pair)
+    p = t3.add_parser("run", help="run the bridge in the foreground")
+    p.add_argument("--done-hours", type=float, default=12, help="how long a finished thread stays lit")
+    p.set_defaults(func=cmd_t3_run)
+    t3.add_parser("status", help="show pairing and bridge state").set_defaults(func=cmd_t3_status)
+    p = t3.add_parser("install", help="run the bridge at login (launchd)")
+    p.add_argument("--done-hours", type=float, default=12)
+    p.set_defaults(func=cmd_t3_install)
+    t3.add_parser("uninstall", help="stop and remove the bridge").set_defaults(func=cmd_t3_uninstall)
 
     args = parser.parse_args(argv)
     args.func(args)

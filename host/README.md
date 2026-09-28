@@ -78,6 +78,45 @@ Posting the same `source` + `id` again updates that signal. `"level": "off"` rem
   so VIA and Keychron Launcher keep working alongside it.
 - **Visibility:** lights only show while the RGB backlight is on.
 
+## T3 Code
+
+`keysignal t3` lights a key for each [T3 Code](https://github.com/pingdotgg/t3code)
+thread. It pairs with T3 as a read-only client and follows the same live thread
+list T3's sidebar shows.
+
+| Thread | Key |
+|---|---|
+| needs approval, awaiting input, plan ready | red, blinking |
+| working (also background subagents) | amber, pulsing |
+| finished in the last 12 hours | green |
+| failed in the last 12 hours | red |
+| settled, archived, deleted, snoozed, or older | off |
+
+Each thread gets its own key from the auto pool (F1–F12) and keeps it while it's
+lit. Most urgent threads get a key first when the pool is full.
+
+```bash
+# T3 Code → Settings → Connections → Create pairing link, "Read only"
+keysignal t3 pair 'http://127.0.0.1:3773/pair#token=…'
+keysignal t3 install      # starts at login; log: ~/Library/Logs/keysignal-t3.log
+keysignal t3 status
+keysignal t3 uninstall
+```
+
+The link works once, within 5 minutes. The token it's traded for lasts 30 days
+and is stored in `~/Library/Application Support/keysignal/t3.json` (readable only
+by you). When it expires or is revoked in T3, the log says so; pair again with a
+new link. `--done-hours` changes how long finished threads stay lit.
+
+How it talks to T3: `POST /oauth/token` trades the pairing credential for a bearer
+token (scope `orchestration:read`), `POST /api/auth/websocket-ticket` gets a
+short-lived ticket, and `ws://…/ws?wsTicket=…` carries Effect RPC JSON messages:
+one `orchestration.subscribeShell` request, then a snapshot and thread updates,
+each acknowledged with an `Ack`. It follows T3 v0.0.42; when T3 changes this
+protocol, this module changes with it. It reconnects on its own when T3 or the
+keysignal service restarts, and its signals expire 90 seconds after the bridge
+stops.
+
 ## Develop
 
 ```bash
