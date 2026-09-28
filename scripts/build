@@ -13,6 +13,11 @@ fi
 # QMK picks its home from the working directory before its global config, so
 # building from inside firmware/ never uses some other QMK checkout by accident.
 cd "$ROOT/firmware"
+
+# A release's source archive has no git data; QMK must then skip asking git
+# for the firmware version, or its build fails.
+[ -e .git ] || export SKIP_GIT=yes
+
 QMK_USERSPACE="$ROOT" qmk compile -kb keychron/k2_he/ansi -km mylayout "$@"
 
 echo "firmware: $ROOT/keychron_k2_he_ansi_mylayout.bin"
