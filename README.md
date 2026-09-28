@@ -71,7 +71,8 @@ qmk compile -kb keychron/k2_he/ansi -km mylayout
 Programs on the computer can color any key green (good), yellow (warn) or red
 (needs attention) over raw HID. Signals are held in RAM, can expire on their
 own, and show only while the RGB backlight is on. Implementation and full
-details: `features/key_signals.h`.
+details: `features/key_signals.h`. On the Mac, the `keysignal` service in
+[`host/`](host/README.md) wraps this in a local HTTP API and command line.
 
 Send a 32-byte report to the keyboard's raw HID interface (vendor ID `0x3434`,
 usage page `0xFF60`, usage `0x61`). The keyboard echoes it back with the status
