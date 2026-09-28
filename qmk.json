@@ -1,0 +1,6 @@
+{
+    "userspace_version": "1.1",
+    "build_targets": [
+        ["keychron/k2_he/ansi", "mylayout"]
+    ]
+}

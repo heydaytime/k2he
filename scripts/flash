@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Flash the K2 HE safely.
+
+Builds the firmware (or takes --bin), checks the image, waits for exactly one
+keyboard in bootloader mode, backs up what is on it now, writes the new image,
+and confirms the keyboard comes back.
+
+Put the keyboard in bootloader mode: switch to cable mode, unplug it, then hold
+Esc while plugging it back in.
+
+  scripts/flash                          build and flash
+  scripts/flash --bin backups/x.bin      flash a specific image (e.g. restore a backup)
+  scripts/flash --dry-run                every step except the write
+"""
+
+import argparse
+import re
+import struct
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BUILT_BIN = ROOT / "keychron_k2_he_ansi_mylayout.bin"
+BACKUP_DIR = ROOT / "backups" / "local"
+
+DFU_ID = "0483:df11"
+FLASH_BASE = 0x08000000
+FLASH_SIZE = 256 * 1024
+RAM_BASE, RAM_SIZE = 0x20000000, 64 * 1024
+# The STM32F401xC's flash layout as its ROM bootloader describes it.
+EXPECTED_LAYOUT = "/0x08000000/04*016Kg,01*064Kg,01*128Kg"
+KEYCHRON_VENDOR_ID = 0x3434
+
+
+def fail(message):
+    sys.exit(f"flash: STOPPED, nothing was written. {message}")
+
+
+def check_image(path):
+    data = path.read_bytes()
+    if not 8 <= len(data) <= FLASH_SIZE:
+        fail(f"{path} is {len(data)} bytes; it must fit in {FLASH_SIZE}.")
+    sp, reset = struct.unpack("<II", data[:8])
+    if not RAM_BASE < sp <= RAM_BASE + RAM_SIZE:
+        fail(f"{path} has initial stack pointer 0x{sp:08x}, outside RAM. Not a firmware image?")
+    if not reset & 1 or not FLASH_BASE <= (reset & ~1) < FLASH_BASE + len(data):
+        fail(f"{path} has reset vector 0x{reset:08x}, outside the image. Not a firmware image?")
+    print(f"image ok: {path.name}, {len(data)} bytes, reset handler 0x{reset & ~1:08x}")
+
+
+def dfu_devices():
+    out = subprocess.run(["dfu-util", "-l"], capture_output=True, text=True).stdout
+    return [line for line in out.splitlines() if line.startswith("Found DFU") and DFU_ID in line.lower()]
+
+
+def wait_for_bootloader(timeout):
+    print("waiting for the keyboard in bootloader mode (cable mode, unplug, hold Esc, plug in)...")
+    deadline = time.monotonic() + timeout
+    while True:
+        found = dfu_devices()
+        if found:
+            break
+        if time.monotonic() > deadline:
+            fail(f"no keyboard in bootloader mode after {timeout}s.")
+        time.sleep(1)
+    time.sleep(1)  # let every interface enumerate before judging
+    found = dfu_devices()
+    devices = {re.search(r'path="([^"]*)"', line).group(1) for line in found}
+    if len(devices) != 1:
+        fail(f"expected exactly one device in bootloader mode, found {len(devices)}. Unplug the others.")
+    flash = [line for line in found if "alt=0," in line]
+    if not flash or EXPECTED_LAYOUT not in flash[0]:
+        fail("the device in bootloader mode is not a 256KB STM32F401 (the K2 HE's chip):\n  "
+             + (flash[0] if flash else "no internal flash interface"))
+    print("bootloader ok: one STM32F401xC, 256KB")
+
+
+def backup():
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    path = BACKUP_DIR / f"k2he-{datetime.now():%Y%m%d-%H%M%S}.bin"
+    result = subprocess.run(
+        ["dfu-util", "-d", DFU_ID, "-a", "0", "-s", f"0x{FLASH_BASE:08x}:{FLASH_SIZE}", "-U", str(path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not path.exists() or path.stat().st_size != FLASH_SIZE:
+        fail(f"could not back up the current firmware:\n{result.stdout[-500:]}{result.stderr[-500:]}")
+    print(f"backup ok: {path.relative_to(ROOT)}")
+    return path
+
+
+def write(image):
+    print("writing firmware (do not unplug)...")
+    result = subprocess.run(
+        ["dfu-util", "-d", DFU_ID, "-a", "0", "-s", f"0x{FLASH_BASE:08x}:leave", "-D", str(image)],
+        capture_output=True, text=True,
+    )
+    output = result.stdout + result.stderr
+    if "File downloaded successfully" not in output:
+        sys.exit("flash: WRITE FAILED. The keyboard is still in bootloader mode, so it can be retried.\n"
+                 "Run scripts/flash again, or restore the backup with scripts/flash --bin <backup>.\n"
+                 + output[-1500:])
+    print("write ok")
+
+
+def keyboard_present():
+    out = subprocess.run(["ioreg", "-p", "IOUSB", "-l", "-w0"], capture_output=True, text=True).stdout
+    return f'"idVendor" = {KEYCHRON_VENDOR_ID}' in out
+
+
+def wait_for_keyboard(timeout=20):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if keyboard_present() and not dfu_devices():
+            print("keyboard is back and running the new firmware")
+            return
+        time.sleep(1)
+    print(f"warning: the keyboard did not reappear within {timeout}s. Unplug and replug it; "
+          "if it stays dark, enter bootloader mode and restore the backup.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--bin", type=Path, help="flash this image instead of building")
+    parser.add_argument("--dry-run", action="store_true", help="do everything except the write")
+    parser.add_argument("--wait", type=int, default=120, help="seconds to wait for bootloader mode")
+    args = parser.parse_args()
+
+    if args.bin:
+        image = args.bin.resolve()
+        if not image.is_file():
+            fail(f"{args.bin} does not exist.")
+    else:
+        subprocess.run([str(ROOT / "scripts" / "build")], check=True)
+        image = BUILT_BIN
+    check_image(image)
+    wait_for_bootloader(args.wait)
+    saved = backup()
+    if args.dry_run:
+        print(f"dry run: stopped before the write. Unplug and replug the keyboard to leave bootloader mode.\n"
+              f"To restore this exact state later: scripts/flash --bin {saved.relative_to(ROOT)}")
+        return
+    write(image)
+    wait_for_keyboard()
+
+
+if __name__ == "__main__":
+    main()

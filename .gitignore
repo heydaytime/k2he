@@ -1,0 +1,7 @@
+# build outputs (scripts/build copies the firmware here)
+/*.bin
+/*.hex
+/.build/
+# per-flash backups made by scripts/flash
+/backups/local/
+.DS_Store

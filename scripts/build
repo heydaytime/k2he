@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Builds the K2 HE firmware: the pinned firmware/ tree plus this repo's keymap.
+# Extra arguments go to `qmk compile` (e.g. -j8).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ ! -d "$ROOT/firmware/lib/chibios/os" ]; then
+    echo "fetching firmware and its libraries (first run only)..."
+    git -C "$ROOT" submodule update --init --recursive
+fi
+
+# QMK picks its home from the working directory before its global config, so
+# building from inside firmware/ never uses some other QMK checkout by accident.
+cd "$ROOT/firmware"
+QMK_USERSPACE="$ROOT" qmk compile -kb keychron/k2_he/ansi -km mylayout "$@"
+
+echo "firmware: $ROOT/keychron_k2_he_ansi_mylayout.bin"

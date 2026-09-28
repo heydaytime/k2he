@@ -1,0 +1,4 @@
+[submodule "firmware"]
+	path = firmware
+	url = https://github.com/heydaytime/keychron-qmk_firmware.git
+	branch = k2he

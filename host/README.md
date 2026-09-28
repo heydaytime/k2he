@@ -3,12 +3,12 @@
 A small Mac service that owns the connection to the keyboard, so anything on
 this Mac (scripts, CI watchers, agent harnesses) can color keys through a local
 HTTP API or the `keysignal` command. It needs the key signals firmware in this
-repo (`features/key_signals.c`) and the USB cable plugged in.
+repo (`keyboards/keychron/k2_he/ansi/keymaps/mylayout/features/key_signals.c`) and the USB cable plugged in.
 
 ## Install
 
 ```bash
-uv tool install --editable ~/qmk_firmware/keyboards/keychron/k2_he/ansi/keymaps/mylayout/host
+uv tool install --editable ~/k2he/host
 keysignal install     # starts at login via launchd; log: ~/Library/Logs/keysignal.log
 keysignal uninstall   # stops and removes it
 ```
