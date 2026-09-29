@@ -9,11 +9,18 @@ online.
 
 ## 📷 Layout
 
-Mac base layer (QWERTY)
-![Mac layout](docs/main-keyboard-layout.png)
+![Mac layer](docs/layers/mac.png)
+![Mac Fn layer](docs/layers/mac-fn.png)
+![Windows layer](docs/layers/windows.png)
+![Windows Fn layer](docs/layers/windows-fn.png)
 
-Windows base layer
-![Windows layout](docs/alt-keyboard-layout.png)
+These pictures are drawn from [`docs/layers.toml`](docs/layers.toml), which lists
+what every key does on every layer. After changing `keymap.c`, update that file
+and redraw them (all four in one picture: `docs/layers/all.png`):
+
+```bash
+scripts/render-layers
+```
 
 ---
 
@@ -27,6 +34,7 @@ keyboards/keychron/k2_he/ansi/keymaps/mylayout/   my keymap (QMK external usersp
 host/                                             keysignal: Mac service + CLI for key colors
 firmware/                                         Keychron's QMK, pinned (submodule, my fork)
 scripts/build, scripts/flash                      build, and flash with safety checks
+docs/layers.toml, scripts/render-layers           what's on each layer, drawn to docs/layers/*.png
 backups/                                          firmware images read off the keyboard
 qmk.json                                          tells QMK this repo is a userspace
 ```

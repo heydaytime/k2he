@@ -1,0 +1,219 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pillow>=10.1"]
+# ///
+"""Draw docs/layers.toml as reference pictures of the K2 HE, one PNG per layer.
+
+Key positions and sizes come from the firmware's keyboard.json, so the pictures
+match the real board. Writes docs/layers/<layer>.png and docs/layers/all.png.
+
+  scripts/render-layers
+  scripts/render-layers --keyboard-json <path>   when firmware/ isn't checked out
+"""
+
+import argparse
+import json
+import sys
+import tomllib
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+ROOT = Path(__file__).resolve().parent.parent
+LAYERS = ROOT / "docs" / "layers.toml"
+OUT_DIR = ROOT / "docs" / "layers"
+KEYBOARD_JSON = ROOT / "firmware" / "keyboards" / "keychron" / "k2_he" / "ansi" / "keyboard.json"
+LAYOUT = "LAYOUT_ansi_84"
+
+UNIT = 110   # pixels per key unit
+GAP = 8      # space between keys
+PAD = 48     # margin around the picture
+RADIUS = 14
+
+BACKGROUND = "#f4f4f5"
+CASE = "#d4d4d8"
+TEXT = "#18181b"
+MUTED = "#52525b"
+KEY = ("#ffffff", "#a1a1aa")          # fill, outline
+TRANSPARENT = ("#e4e4e7", "#d4d4d8")
+KINDS = {
+    "macro": ("#fde68a", "#d97706"),
+    "swap": ("#dbeafe", "#3b82f6"),
+    "layer": ("#c7d2fe", "#4f46e5"),
+    "light": ("#fbcfe8", "#db2777"),
+    "wireless": ("#bbf7d0", "#16a34a"),
+}
+FONTS = ["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+
+
+def font(size, bold=False):
+    for path in FONTS:
+        if Path(path).exists():
+            f = ImageFont.truetype(path, size)
+            if bold and path.endswith("SFNS.ttf"):
+                try:
+                    f.set_variation_by_name("Bold")
+                except (OSError, ValueError):
+                    pass
+            return f
+    return ImageFont.load_default(size)
+
+
+def fail(message):
+    sys.exit(f"render-layers: {message}")
+
+
+def physical_rows(keyboard_json):
+    """The layout's keys grouped into rows, each key as (x, y, w, h) in key units."""
+    try:
+        layout = json.loads(keyboard_json.read_text())["layouts"][LAYOUT]["layout"]
+    except FileNotFoundError:
+        fail(f"{keyboard_json} not found; check out firmware/ or pass --keyboard-json")
+    rows = {}
+    for key in layout:
+        rows.setdefault(key["y"], []).append((key["x"], key["y"], key.get("w", 1), key.get("h", 1)))
+    return [rows[y] for y in sorted(rows)]
+
+
+def parse_key(entry, where):
+    if isinstance(entry, str):
+        return entry, None
+    if not isinstance(entry, dict) or "label" not in entry:
+        fail(f"{where}: a key is a string or {{ label = ..., kind = ... }}, got {entry!r}")
+    kind = entry.get("kind")
+    if kind is not None and kind not in KINDS:
+        fail(f"{where}: unknown kind {kind!r}; use one of {', '.join(KINDS)}")
+    return entry["label"], kind
+
+
+def check_layer(layer, rows):
+    name = layer.get("name", "?")
+    given = layer.get("rows", [])
+    if len(given) != len(rows):
+        fail(f"layer {name!r} has {len(given)} rows; the board has {len(rows)}")
+    for i, (keys, physical) in enumerate(zip(given, rows)):
+        if len(keys) != len(physical):
+            fail(f"layer {name!r} row {i + 1} has {len(keys)} keys; that row on the board has {len(physical)}")
+
+
+def fit_font(draw, lines, width, height, start):
+    size = start
+    while size > 10:
+        f = font(size)
+        line_h = size * 1.2
+        widest = max(draw.textlength(line, font=f) for line in lines)
+        if widest <= width and line_h * len(lines) <= height:
+            return f, line_h
+        size -= 1
+    return font(size), size * 1.2
+
+
+def draw_key(draw, box, label, kind):
+    x0, y0, x1, y1 = box
+    if label == "_":
+        fill, outline = TRANSPARENT
+    else:
+        fill, outline = KINDS[kind] if kind else KEY
+    draw.rounded_rectangle(box, radius=RADIUS, fill=fill, outline=outline, width=2)
+    if label == "_":
+        return
+    lines = label.split("\n")
+    f, line_h = fit_font(draw, lines, x1 - x0 - 16, y1 - y0 - 16, 26 if len(lines) == 1 else 22)
+    top = (y0 + y1) / 2 - line_h * len(lines) / 2
+    for i, line in enumerate(lines):
+        draw.text(((x0 + x1) / 2, top + line_h * (i + 0.5)), line, font=f, fill=TEXT, anchor="mm")
+
+
+def wrap(draw, text, f, width):
+    words, lines, line = text.split(), [], ""
+    for word in words:
+        candidate = f"{line} {word}".strip()
+        if draw.textlength(candidate, font=f) <= width or not line:
+            line = candidate
+        else:
+            lines.append(line)
+            line = word
+    return lines + ([line] if line else [])
+
+
+def render(layer, rows, kinds_text):
+    board_w = max(x + w for row in rows for x, _, w, _ in row) * UNIT
+    board_h = max(y + h for row in rows for _, y, _, h in row) * UNIT
+    width = int(board_w + 2 * PAD)
+
+    title_f, body_f = font(40, bold=True), font(24)
+    scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    note_lines = []
+    for note in layer.get("notes", []):
+        wrapped = wrap(scratch, note, body_f, width - 2 * PAD - 24)
+        note_lines += [("• " if i == 0 else "  ") + line for i, line in enumerate(wrapped)]
+    used = {parse_key(k, "")[1] for row in layer["rows"] for k in row} - {None}
+    legend = [kind for kind in KINDS if kind in used]
+
+    header_h = 150
+    footer_h = 24 + len(note_lines) * 34 + (len(legend) * 38 + 16 if legend else 0) + 16
+    height = int(header_h + board_h + PAD + footer_h + PAD)
+    image = Image.new("RGB", (width, height), BACKGROUND)
+    draw = ImageDraw.Draw(image)
+
+    draw.text((PAD, PAD), layer["name"], font=title_f, fill=TEXT, anchor="lt")
+    if layer.get("about"):
+        draw.text((PAD, PAD + 54), layer["about"], font=body_f, fill=MUTED, anchor="lt")
+
+    top = PAD + header_h - 20
+    draw.rounded_rectangle((PAD - 14, top - 14, PAD + board_w + 6, top + board_h + 6), radius=24, fill=CASE)
+    for r, (physical, keys) in enumerate(zip(rows, layer["rows"])):
+        for c, ((x, y, w, h), entry) in enumerate(zip(physical, keys)):
+            label, kind = parse_key(entry, f"layer {layer['name']!r} row {r + 1} key {c + 1}")
+            box = (PAD + x * UNIT, top + y * UNIT, PAD + (x + w) * UNIT - GAP, top + (y + h) * UNIT - GAP)
+            draw_key(draw, box, label, kind)
+
+    y = top + board_h + PAD
+    for line in note_lines:
+        draw.text((PAD, y), line, font=body_f, fill=TEXT, anchor="lt")
+        y += 34
+    if legend:
+        y += 16
+        for kind in legend:
+            fill, outline = KINDS[kind]
+            draw.rounded_rectangle((PAD, y, PAD + 28, y + 28), radius=6, fill=fill, outline=outline, width=2)
+            draw.text((PAD + 42, y + 14), kinds_text.get(kind, kind), font=body_f, fill=MUTED, anchor="lm")
+            y += 38
+    return image
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--keyboard-json", type=Path, default=KEYBOARD_JSON)
+    args = parser.parse_args()
+
+    spec = tomllib.loads(LAYERS.read_text())
+    rows = physical_rows(args.keyboard_json)
+    layers = spec.get("layer", [])
+    if not layers:
+        fail(f"{LAYERS} has no [[layer]] entries")
+    for layer in layers:
+        check_layer(layer, rows)
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    images = []
+    for layer in layers:
+        image = render(layer, rows, spec.get("kinds", {}))
+        path = OUT_DIR / f"{layer['file']}.png"
+        image.save(path, optimize=True)
+        images.append(image)
+        print(f"wrote {path.relative_to(ROOT)}")
+
+    all_image = Image.new("RGB", (max(i.width for i in images), sum(i.height for i in images)), BACKGROUND)
+    y = 0
+    for image in images:
+        all_image.paste(image, (0, y))
+        y += image.height
+    all_image.save(OUT_DIR / "all.png", optimize=True)
+    print(f"wrote {(OUT_DIR / 'all.png').relative_to(ROOT)}")
+
+
+if __name__ == "__main__":
+    main()
