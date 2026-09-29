@@ -67,3 +67,6 @@ enum key_signal_pattern {
  *     }
  */
 void key_signals_render(uint8_t led_min, uint8_t led_max);
+
+/** True while any key has an unexpired signal. */
+bool key_signals_active(void);

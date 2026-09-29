@@ -87,7 +87,9 @@ It refuses to write if any check fails.
 
 Programs on the computer can color any key green (good), yellow (warn) or red
 (needs attention) over raw HID. Signals are held in RAM, can expire on their
-own, and show only while the RGB backlight is on. Firmware side:
+own, and show only while the RGB backlight is on. On the Mac layer, while any
+signal is up, F1–F12 drop the RGB effect, so the only colors there are signals.
+Firmware side:
 `keyboards/keychron/k2_he/ansi/keymaps/mylayout/features/key_signals.h`. On the
 Mac, the [`keysignal`](host/README.md) service wraps this in a local HTTP API
 and command line:

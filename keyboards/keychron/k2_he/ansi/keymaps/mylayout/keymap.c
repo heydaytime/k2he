@@ -211,6 +211,16 @@ void matrix_scan_user(void) {
 }
 
 bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
+    // On the Mac layer, while any key signal is up, F1-F12 drop the RGB effect
+    // so only the signals show there.
+    if (get_highest_layer(default_layer_state) == MAC_BASE && key_signals_active()) {
+        for (uint8_t col = 1; col <= 12; col++) {
+            uint8_t led = g_led_config.matrix_co[0][col];
+            if (led != NO_LED && led >= led_min && led < led_max) {
+                rgb_matrix_set_color(led, RGB_OFF);
+            }
+        }
+    }
     key_signals_render(led_min, led_max);
     return true;
 }

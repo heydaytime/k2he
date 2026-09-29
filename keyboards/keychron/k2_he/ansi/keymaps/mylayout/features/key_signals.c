@@ -103,6 +103,17 @@ static uint8_t pattern_intensity(uint8_t pattern, uint32_t now) {
     }
 }
 
+bool key_signals_active(void) {
+    uint32_t now = timer_read32();
+    for (uint8_t i = 0; i < RGB_MATRIX_LED_COUNT; i++) {
+        key_signal_t *s = &signals[i];
+        if (s->level != KEY_SIGNAL_OFF && !(s->expires && timer_expired32(now, s->expires_at))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void key_signals_render(uint8_t led_min, uint8_t led_max) {
     uint32_t now        = timer_read32();
     uint8_t  brightness = MAX(rgb_matrix_get_val(), KEY_SIGNAL_MIN_BRIGHTNESS);
